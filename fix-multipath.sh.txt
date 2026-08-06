@@ -1,0 +1,67 @@
+#!/bin/bash
+# -----------------------------------------------------------------------------
+# Script Name: fix_multipath.sh
+# Description: Diagnoses and cleans up stale/dead SCSI paths causing multipath hangs on OL9.
+# Requirements: Must be run as root.
+# -----------------------------------------------------------------------------
+
+set -euo pipefail
+
+# Check for root privileges
+if [ "$EUID" -ne 0 ]; then
+    echo "[-] Error: This script must be run as root." >&2
+    exit 1
+fi
+
+echo "[+] Step 1: Fetching current multipath topology instantly via daemon..."
+multipathd show maps topology || echo "[-] Warning: Failed to fetch topology from daemon."
+
+echo -e "\n[+] Step 2: Checking for failed or faulty paths..."
+# Use daemon status instead of 'multipath -ll' to prevent hanging
+FAILED_PATHS=$(multipathd show paths format "%d %t" 2>/dev/null | grep -E "failed|faulty|offline" || true)
+
+if [ -z "$FAILED_PATHS" ]; then
+    echo "[+] No failed or faulty paths detected. System is clean."
+    exit 0
+fi
+
+echo "[-] Found the following problematic paths:"
+echo "$FAILED_PATHS"
+
+# Array to track deleted devices for summary
+DELETED_DEVS=()
+
+echo -e "\n[+] Step 3: Removing stale SCSI devices from OS kernel..."
+while read -r dev status; do
+    # Remove leading path info if any, ensuring we have just 'sdX'
+    dev_cleaned=$(basename "$dev")
+    
+    # Safety check: Ensure it is a valid scsi device format (e.g., sda, sdbb)
+    if [[ "$dev_cleaned" =~ ^sd[a-z]+$ ]]; then
+        sys_path="/sys/block/$dev_cleaned/device/delete"
+        if [ -f "$sys_path" ]; then
+            echo "    -> Purging dead device: $dev_cleaned (Status: $status)"
+            echo 1 > "$sys_path"
+            DELETED_DEVS+=("$dev_cleaned")
+        else
+            echo "    -> [Skip] Sysfs path not found for $dev_cleaned"
+        fi
+    else
+        echo "    -> [Skip] $dev_cleaned does not match expected SCSI disk pattern"
+    fi
+done <<< "$FAILED_PATHS"
+
+echo -e "\n[+] Step 4: Refreshing multipath configurations..."
+echo "    -> Triggering multipath topology flush..."
+multipath -F || true
+
+echo "    -> Reconfiguring multipath daemon..."
+multipathd reconfigure
+
+echo -e "\n[+] Execution complete summary:"
+if [ ${#DELETED_DEVS[@]} -ne 0 ]; then
+    echo "Successfully purged ${#DELETED_DEVS[@]} stale disk node(s): ${DELETED_DEVS[*]}"
+    echo "Run 'multipathd show maps topology' manually to verify the fix."
+else
+    echo "No devices were purged. If 'multipath -ll' still hangs, check storage switch/zoning."
+fi

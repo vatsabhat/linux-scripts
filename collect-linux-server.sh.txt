@@ -1,0 +1,200 @@
+#!/bin/bash
+###############################################################################
+# Linux Server Inventory & Health Report
+# Compatible : RHEL 7 / 8 / 9
+###############################################################################
+
+REPORT="Linux_Server_Report_$(hostname)_$(date +%F_%H%M).txt"
+
+exec >"$REPORT"
+
+LINE="================================================================================"
+
+section()
+{
+echo
+echo "$LINE"
+echo "$1"
+echo "$LINE"
+}
+
+###############################################################################
+section "SERVER INFORMATION"
+
+echo "Hostname          : $(hostname)"
+echo "FQDN              : $(hostname -f 2>/dev/null)"
+echo "Date              : $(date)"
+echo "OS                : $(cat /etc/redhat-release 2>/dev/null)"
+echo "Kernel            : $(uname -r)"
+echo "Architecture      : $(uname -m)"
+echo "Uptime            : $(uptime -p)"
+echo "CPU Model         : $(lscpu | awk -F: '/Model name/{print $2}' | xargs)"
+echo "CPU(s)            : $(nproc)"
+echo "Memory            : $(free -h | awk '/Mem/{print $2}')"
+echo "Timezone          : $(timedatectl 2>/dev/null | awk -F: '/Time zone/{print $2}')"
+
+###############################################################################
+section "NETWORK INFORMATION"
+
+printf "%-15s %-8s %-18s %-8s %-8s\n" \
+Interface State IP_Address MTU Speed
+
+for IF in $(ls /sys/class/net | grep -v lo)
+do
+STATE=$(cat /sys/class/net/$IF/operstate)
+
+IP=$(ip -4 addr show $IF | awk '/inet /{print $2}')
+
+MTU=$(cat /sys/class/net/$IF/mtu)
+
+SPEED=$(cat /sys/class/net/$IF/speed 2>/dev/null)
+
+printf "%-15s %-8s %-18s %-8s %-8s\n" \
+"$IF" "$STATE" "$IP" "$MTU" "${SPEED:-Unknown}"
+
+done
+
+echo
+echo "Default Gateway"
+ip route | grep default
+
+echo
+echo "Routing Table"
+ip route
+
+echo
+echo "DNS"
+cat /etc/resolv.conf
+
+###############################################################################
+section "FILESYSTEM INFORMATION"
+
+df -hT
+
+###############################################################################
+section "LVM DETAILS"
+
+pvs 2>/dev/null
+
+echo
+vgs 2>/dev/null
+
+echo
+lvs -o lv_name,vg_name,lv_size,data_percent,lv_attr 2>/dev/null
+
+###############################################################################
+section "BLOCK DEVICES"
+
+lsblk -o NAME,SIZE,FSTYPE,TYPE,MOUNTPOINT
+
+###############################################################################
+section "UUID INFORMATION"
+
+blkid
+
+###############################################################################
+section "iSCSI INFORMATION"
+
+echo "iscsid Service"
+systemctl is-active iscsid 2>/dev/null
+
+echo
+echo "iscsiadm Sessions"
+iscsiadm -m session 2>/dev/null || echo "No Sessions"
+
+echo
+echo "Configured Nodes"
+iscsiadm -m node 2>/dev/null
+
+###############################################################################
+section "MULTIPATH INFORMATION"
+
+echo "multipathd Service"
+systemctl is-active multipathd 2>/dev/null
+
+echo
+multipath -ll 2>/dev/null
+
+###############################################################################
+section "SCSI DEVICES"
+
+lsscsi 2>/dev/null
+
+###############################################################################
+section "FIBRE CHANNEL"
+
+for H in /sys/class/fc_host/host*
+do
+
+[ -d "$H" ] || continue
+
+echo "Host              : $(basename $H)"
+echo "WWPN              : $(cat $H/port_name)"
+echo "WWNN              : $(cat $H/node_name)"
+echo "Port State        : $(cat $H/port_state)"
+echo "Speed             : $(cat $H/speed)"
+echo
+
+done
+
+###############################################################################
+section "RUNNING SERVICES"
+
+systemctl list-units --type=service --state=running --no-pager
+
+###############################################################################
+section "FAILED SERVICES"
+
+systemctl --failed --no-pager
+
+###############################################################################
+section "ENABLED SERVICES"
+
+systemctl list-unit-files --type=service --state=enabled --no-pager
+
+###############################################################################
+section "MEMORY"
+
+free -h
+
+###############################################################################
+section "SWAP"
+
+swapon --show
+
+###############################################################################
+section "LOAD AVERAGE"
+
+uptime
+
+###############################################################################
+section "TOP CPU"
+
+ps -eo pid,user,comm,%cpu --sort=-%cpu | head
+
+###############################################################################
+section "TOP MEMORY"
+
+ps -eo pid,user,comm,%mem --sort=-%mem | head
+
+###############################################################################
+section "OPEN TCP PORTS"
+
+ss -tulpn
+
+###############################################################################
+section "LAST REBOOT"
+
+last reboot | head
+
+###############################################################################
+section "LAST LOGIN"
+
+last | head
+
+###############################################################################
+section "END OF REPORT"
+
+echo
+echo "Report Generated Successfully."
+echo "File : $REPORT"
