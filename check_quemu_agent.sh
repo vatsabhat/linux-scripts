@@ -1,3 +1,5 @@
+#!/bin/bash
+## Check quemu agent status from KVM HOST ###
 for vm in $(virsh list --state-running --name); do
     echo -n "VM $vm: "
     virsh qemu-agent-command "$vm" '{"execute":"guest-info"}' &>/dev/null \
