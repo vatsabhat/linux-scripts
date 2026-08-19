@@ -1,0 +1,81 @@
+#!/bin/bash
+
+# Run as root
+
+# Function to log actions
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> /var/log/rhel_hardening.log
+}
+
+# Update the system
+log "Updating the system..."
+dnf -y update
+log "System updated."
+
+# Ensure SELinux is set to enforcing
+log "Setting SELinux to enforcing..."
+setenforce 1
+sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+log "SELinux set to enforcing."
+
+# Disable root login via SSH
+log "Disabling root login via SSH..."
+sed -i 's/^PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
+systemctl restart sshd
+log "Root login via SSH disabled."
+
+# Configure password policies
+log "Configuring password policies..."
+cat <<EOT >> /etc/security/pwquality.conf
+minlen = 14
+ucredit = -1
+lcredit = -1
+dcredit = -1
+ocredit = -1
+EOT
+log "Password policies configured."
+
+# Lock inactive user accounts
+log "Locking inactive user accounts..."
+# Lock accounts that have been inactive for 35 days
+find /etc/shadow -type f -exec chage -E 0 {} \;
+log "Inactive user accounts locked."
+
+# Configure firewall to allow only necessary ports
+log "Configuring firewall..."
+firewall-cmd --permanent --remove-service=dhcp
+firewall-cmd --permanent --add-service=ssh
+firewall-cmd --permanent --add-service=http
+firewall-cmd --permanent --add-service=https
+firewall-cmd --reload
+log "Firewall configured."
+
+# Ensure the system is set to automatically update
+log "Setting up automatic updates..."
+dnf install -y dnf-automatic
+systemctl enable --now dnf-automatic.timer
+log "Automatic updates enabled."
+
+# Limit core dumps
+log "Limiting core dumps..."
+echo "fs.suid_dumpable = 0" >> /etc/sysctl.conf
+sysctl -p
+log "Core dumps limited."
+
+# Set file permissions
+log "Setting file permissions..."
+chmod 700 /root
+chmod 600 /etc/shadow
+log "File permissions set."
+
+# Disable unused filesystems
+log "Disabling unused filesystems..."
+echo "install cramfs /bin/true" >> /etc/modprobe.d/blacklist.conf
+echo "install freevxfs /bin/true" >> /etc/modprobe.d/blacklist.conf
+echo "install jffs2 /bin/true" >> /etc/modprobe.d/blacklist.conf
+echo "install hfs /bin/true" >> /etc/modprobe.d/blacklist.conf
+log "Unused filesystems disabled."
+
+# Final message
+log "CIS Level 2 hardening script completed."
+echo "Hardening completed. Check /var/log/rhel_hardening.log for details."
