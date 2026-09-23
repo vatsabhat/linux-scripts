@@ -26,12 +26,12 @@ if ! command -v semanage &> /dev/null; then
     dnf install -y policycoreutils-python-utils
 fi
 
-echo "🔄 Changing SSH port to $NEW_PORT on RHEL 9..."
+echo "🔄 Hardening SSH on RHEL 9..."
 
 # ----------------------------------------------------
 # 2. Configure SELinux
 # ----------------------------------------------------
-echo "🔐 Updating SELinux policies..."
+echo "🔐 Updating SELinux policies for port $NEW_PORT..."
 if semanage port -l | grep -q -w "$NEW_PORT"; then
     # If port is already assigned to something else, try to modify it
     semanage port -m -t ssh_port_t -p tcp "$NEW_PORT" || true
@@ -47,11 +47,16 @@ firewall-cmd --permanent --add-port="${NEW_PORT}/tcp"
 firewall-cmd --reload
 
 # ----------------------------------------------------
-# 4. Configure SSH Drop-in File
+# 4. Configure SSH Drop-in Files
 # ----------------------------------------------------
-echo "⚙️ Creating SSH drop-in configuration..."
+echo "⚙️  Creating SSH drop-in configurations..."
 mkdir -p /etc/ssh/sshd_config.d/
+
+# Set the custom port
 echo "Port $NEW_PORT" > /etc/ssh/sshd_config.d/10-port.conf
+
+# Disable root login
+echo "PermitRootLogin no" > /etc/ssh/sshd_config.d/20-disable-root.conf
 
 # ----------------------------------------------------
 # 5. Test & Restart SSH
@@ -60,11 +65,12 @@ echo "🧪 Testing SSH configuration syntax..."
 if sshd -t; then
     echo "🚀 Restarting SSH service..."
     systemctl restart sshd
-    echo "✅ Success! SSH port changed to $NEW_PORT."
+    echo "✅ Success! SSH port changed to $NEW_PORT and root login is disabled."
     echo "⚠️  CRITICAL: Do NOT close this terminal. Open a NEW window to test access:"
-    echo "    ssh -p $NEW_PORT your_user@$(hostname -I | awk '{print $1}')"
+    echo "    ssh -p $NEW_PORT regular_user@$(hostname -I | awk '{print $1}')"
 else
     echo "❌ Error: SSH configuration test failed. Reverting changes..."
     rm -f /etc/ssh/sshd_config.d/10-port.conf
+    rm -f /etc/ssh/sshd_config.d/20-disable-root.conf
     exit 1
 fi
