@@ -45,8 +45,6 @@ log "Inactive user accounts locked."
 log "Configuring firewall..."
 firewall-cmd --permanent --remove-service=dhcp
 firewall-cmd --permanent --add-service=ssh
-firewall-cmd --permanent --add-service=http
-firewall-cmd --permanent --add-service=https
 firewall-cmd --reload
 log "Firewall configured."
 
